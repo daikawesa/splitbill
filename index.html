@@ -190,23 +190,23 @@
         const row = document.createElement("div");
         row.className = "card mb-2";
         row.innerHTML = `
-    <div class="card-body p-2">
-      <div class="row g-2 align-items-center">
-        <div class="col-md-5">
-          <input class="form-control menu-name" placeholder="Nama menu">
+      <div class="card-body p-2">
+        <div class="row g-2 align-items-center">
+          <div class="col-md-5">
+            <input class="form-control menu-name" placeholder="Nama menu">
+          </div>
+          <div class="col-4 col-md-2">
+            <input type="number" class="form-control qty text-center" min="1" value="1">
+          </div>
+          <div class="col-6 col-md-3">
+            <input class="form-control price text-start" placeholder="Rp">
+          </div>
+          <div class="col-2 col-md-2 text-end">
+            <button class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">✕</button>
+          </div>
         </div>
-        <div class="col-4 col-md-2">
-          <input type="number" class="form-control qty text-center" min="1" value="1">
-        </div>
-        <div class="col-6 col-md-3">
-          <input class="form-control price text-start" placeholder="Rp">
-        </div>
-        <div class="col-2 col-md-2 text-end">
-          <button class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">✕</button>
-        </div>
-      </div>
-      <div class="checkbox-group mt-2"></div>
-    </div>`;
+        <div class="checkbox-group mt-2"></div>
+      </div>`;
         row.querySelector(".price").addEventListener("input", (e) => {
           e.target.value = rupiah(parseRp(e.target.value));
         });
@@ -214,6 +214,7 @@
         updatePeople();
       }
 
+      /* Formatting Input */
       [discountInput, taxInput, serviceInput].forEach((i) => {
         i.addEventListener("input", () => (i.value = rupiah(parseRp(i.value))));
       });
@@ -223,11 +224,13 @@
         const payer = payerSelect.value;
         if (!people.length || !payer) return alert("Lengkapi data");
 
-        let gross = 0,
-          subtotal = {},
-          detail = {};
+        /* STEP 1 — read menu rows */
+        let subtotalPerPerson = {};
+        let detail = {};
+        let gross = 0;
+
         people.forEach((p) => {
-          subtotal[p] = 0;
+          subtotalPerPerson[p] = 0;
           detail[p] = [];
         });
 
@@ -238,61 +241,93 @@
           const eaters = [
             ...row.querySelectorAll("input[type=checkbox]:checked"),
           ].map((c) => c.value);
+
           if (!qty || !price || !eaters.length)
             return alert("Menu belum lengkap");
 
           const total = qty * price;
           gross += total;
+
           const share = total / eaters.length;
           eaters.forEach((p) => {
-            subtotal[p] += share;
+            subtotalPerPerson[p] += share;
             detail[p].push(`${name}: ${rupiah(Math.ceil(share))}`);
           });
         }
 
+        /* STEP 2 — parse adjustments */
         const discount = parseRp(discountInput.value);
         const tax = parseRp(taxInput.value);
         const service = parseRp(serviceInput.value);
-        const afterDiscount = gross - discount;
+
+        const totalAdjustable = gross - discount; // base for % calculation
 
         adjustInfo.innerHTML = `Diskon ${rupiah(discount)} | Tax ${(
-          (tax / afterDiscount) *
+          (tax / totalAdjustable) *
           100
-        ).toFixed(2)}% | Service ${((service / afterDiscount) * 100).toFixed(
+        ).toFixed(2)}% | Service ${((service / totalAdjustable) * 100).toFixed(
           2
         )}%`;
 
-        let html = `<div class="alert alert-secondary"><strong>${
-          restoName.value || "Resto"
-        }</strong><br>${billDate.value}</div>`;
-
+        /* STEP 3 — calculate proportional shares */
         let finalPerPerson = {};
+        let html = `
+      <div class="alert alert-secondary">
+        <strong>${restoName.value || "Resto"}</strong><br>${billDate.value}
+      </div>
+    `;
+
+        const grandTotal = gross + tax + service - discount;
 
         people.forEach((p) => {
-          const base = (subtotal[p] / gross) * afterDiscount;
-          const raw = base + (base / afterDiscount) * (tax + service);
-          finalPerPerson[p] = Math.ceil(raw);
+          const ratio = subtotalPerPerson[p] / gross;
+
+          const taxShare = ratio * tax;
+          const serviceShare = ratio * service;
+          const discountShare = ratio * discount;
+
+          const total =
+            subtotalPerPerson[p] + taxShare + serviceShare - discountShare;
+
+          finalPerPerson[p] = Math.ceil(total);
+
           html += `
-      <div class="card mb-2">
-        <div class="card-body p-2">
-          <strong>${p}</strong> — Grand Total: ${rupiah(finalPerPerson[p])}
-          <ul class="mb-0">
-            ${detail[p].map((d) => `<li>${d}</li>`).join("")}
-          </ul>
+        <div class="card mb-2">
+          <div class="card-body p-2">
+            <strong>${p}</strong><br>
+            <ul class="mb-0 mt-2">
+              ${detail[p].map((d) => `<li>${d}</li>`).join("")}
+            </ul>
+            Subtotal: ${rupiah(Math.ceil(subtotalPerPerson[p]))}<br>
+            Tax: ${rupiah(Math.ceil(taxShare))}<br>
+            Service: ${rupiah(Math.ceil(serviceShare))}<br>
+            Discount: -${rupiah(Math.ceil(discountShare))}<br>
+            <hr class="my-2">
+            <strong>Total: ${rupiah(finalPerPerson[p])}</strong>
+          </div>
         </div>
-      </div>`;
+      `;
         });
 
-        html += `<hr><h6>Settlement</h6>`;
+        /* STEP 4 — Settlement */
+        html += `
+      <hr>
+      <h6>Settlement</h6>
+      <div class="alert alert-info">Grand Total Bill: <strong>${rupiah(
+        grandTotal
+      )}</strong></div>
+    `;
+
         people.forEach((p) => {
-          html +=
-            p === payer
-              ? `<div class="alert alert-success">${p} bayar sendiri (${rupiah(
-                  finalPerPerson[p]
-                )})</div>`
-              : `<div class="alert alert-danger">${p} bayar ke ${payer}: ${rupiah(
-                  finalPerPerson[p]
-                )}</div>`;
+          if (p === payer) {
+            html += `<div class="alert alert-success">${p} membayar ${rupiah(
+              finalPerPerson[p]
+            )} (dibayar sendiri)</div>`;
+          } else {
+            html += `<div class="alert alert-danger">${p} bayar ke ${payer}: ${rupiah(
+              finalPerPerson[p]
+            )}</div>`;
+          }
         });
 
         summaryDiv.innerHTML = html;
